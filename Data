@@ -1,0 +1,214 @@
+import tkinter as tk
+import serial
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from PIL import Image, ImageTk
+
+ser = serial.Serial('COM3', baudrate=9600, timeout=1)
+is_running = False
+graph_data_type = None
+fig = None
+canvas = None
+data_accumulator = {
+    'temperature': [],
+    'humidity': [],
+    'pm25': [],
+    'light': [],
+    'water_level': []
+}
+
+def getValue():
+    ser.write(b'g')
+    arduinoData = ser.readline().decode('ascii')
+    return arduinoData.strip().split(',')  # 콤마로 구분된 값을 리스트로 반환
+
+def clear_data_label():
+    data_label.config(text="")
+
+def update_data(data):
+    if data:
+        temperature, humidity, pm25, light, water_level = map(float, data)
+        data_accumulator['temperature'].append(temperature)
+        data_accumulator['humidity'].append(humidity)
+        data_accumulator['pm25'].append(pm25)
+        data_accumulator['light'].append(light)
+        data_accumulator['water_level'].append(water_level)
+
+def plot_graph(data_type):
+    global is_running, fig, canvas, graph_data_type
+
+    # Clear the data label
+    clear_data_label()
+
+    # Stop the previous graph update thread, if any
+    is_running = False
+
+    graph_data_type = data_type
+    if graph_data_type:
+        # Create a new figure and plot
+        fig = plt.figure(figsize=(6, 4))
+        plt.plot(data_accumulator[graph_data_type], 'r', label=graph_data_type.capitalize())
+        plt.xlabel('시간')
+        plt.ylabel('값')
+
+        # Add the plot to the canvas
+        if canvas:
+            canvas.get_tk_widget().destroy()
+        canvas = FigureCanvasTkAgg(fig, master=window)
+        canvas.get_tk_widget().place(relx=0.5, rely=0.5, anchor='center')
+
+        # Start the graph update thread
+        is_running = True
+        update_graph()
+
+def update_graph():
+    global is_running, graph_data_type
+
+    if is_running and graph_data_type:
+        data = getValue()
+        if data:
+            graph_data = float(data[int(graph_data_type)])
+            if graph_data is not None:
+                # Update the plot data
+                data_accumulator[graph_data_type].append(graph_data)
+                plt.gca().lines[0].set_ydata(data_accumulator[graph_data_type])
+
+                # Redraw the plot
+                canvas.draw()
+
+    # Schedule the next update
+    window.after(1000, update_graph)  # Update every 1000 milliseconds (1 second)
+
+def show_temp_humidity():
+    data = getValue()
+    if data:
+        temperature, humidity, *_ = data
+        data_label.config(text=f"온도 : {humidity}°C, 습도 : {temperature}%")
+
+def show_pm25():
+    data = getValue()
+    if data:
+        _, _, pm25, *_ = data
+        data_label.config(text=f"미세먼지 : {pm25}μg/m³")
+
+def show_light():
+    data = getValue()
+    if data:
+        _, _, _, light, *_ = data
+        data_label.config(text=f"조도 : {light} (센서값)")
+
+def show_water_level():
+    data = getValue()
+    if data:
+        _, _, _, _, water_level = data
+        data_label.config(text=f"수위 : {water_level} (센서값)")
+
+def reset_graph():
+    global fig, canvas, graph_data_type, data_accumulator
+    clear_data_label()
+    graph_data_type = None
+    data_accumulator = {
+        'temperature': [],
+        'humidity': [],
+        'pm25': [],
+        'light': [],
+        'water_level': []
+    }
+    if fig:
+        plt.close(fig)
+    if canvas:
+        canvas.get_tk_widget().destroy()
+
+def set_window_icon(window):
+    # Load the icon image using PIL
+    icon_image = Image.open('icon.png')
+
+    # Set the window icon using tk.call
+    window.tk.call('wm', 'iconphoto', window._w, ImageTk.PhotoImage(icon_image))
+
+def plot_temp_humidity_graph():
+    global is_running, fig, canvas, graph_data_type
+
+    # Clear the data label
+    clear_data_label()
+
+    # Stop the previous graph update thread, if any
+    is_running = False
+
+    graph_data_type = 'temperature_humidity'
+    if graph_data_type:
+        # Create a new figure and plot
+        fig = plt.figure(figsize=(6, 4))
+        plt.plot(data_accumulator['temperature'], 'r', label='온도')
+        plt.plot(data_accumulator['humidity'], 'b', label='습도')
+        plt.xlabel('시간')
+        plt.ylabel('값')
+        plt.legend()
+
+        # Add the plot to the canvas
+        if canvas:
+            canvas.get_tk_widget().destroy()
+        canvas = FigureCanvasTkAgg(fig, master=window)
+        canvas.get_tk_widget().place(relx=0.5, rely=0.5, anchor='center')
+
+        # Start the graph update thread
+        is_running = True
+        update_graph()
+
+window = tk.Tk()
+window.title("조온미수")
+window.geometry("700x600")
+# Call the function to set the window icon
+set_window_icon(window)
+
+# 버튼을 누를 때마다 해당 값이 누적되도록 업데이트
+def update_and_plot_data(data_type):
+    data = getValue()
+    if data:
+        update_data(data)
+    plot_graph(data_type)
+
+# 버튼 배치
+
+# 조도 버튼
+light_btn = tk.Button(window, text='조도', command=show_light, bg='lightgray', fg='black')
+light_btn.place(relx=0.1, rely=0.1, anchor='center')
+
+# 조도(그래프) 버튼
+light_graph_btn = tk.Button(window, text='조도(그래프)', command=lambda: update_and_plot_data('light'), bg='lightgray', fg='black')
+light_graph_btn.place(relx=0.18, rely=0.1, anchor='center')
+
+# 온습도 버튼
+temp_humidity_btn = tk.Button(window, text='온습도', command=show_temp_humidity, bg='lightgray', fg='black')
+temp_humidity_btn.place(relx=0.3, rely=0.1, anchor='center')
+
+# 온습도(그래프) 버튼
+temp_humidity_graph_btn = tk.Button(window, text='온습도(그래프)', command=plot_temp_humidity_graph, bg='lightgray', fg='black')
+temp_humidity_graph_btn.place(relx=0.4, rely=0.1, anchor='center')
+
+
+# 미세먼지 버튼
+pm25_btn = tk.Button(window, text='미세먼지', command=show_pm25, bg='lightgray', fg='black')
+pm25_btn.place(relx=0.535, rely=0.1, anchor='center')
+
+# 미세먼지(그래프) 버튼
+pm25_graph_btn = tk.Button(window, text='미세먼지(그래프)', command=lambda: update_and_plot_data('pm25'), bg='lightgray', fg='black')
+pm25_graph_btn.place(relx=0.65, rely=0.1, anchor='center')
+
+# 수위 버튼
+water_level_btn = tk.Button(window, text='수위', command=show_water_level, bg='lightgray', fg='black')
+water_level_btn.place(relx=0.82, rely=0.1, anchor='center')
+
+# 수위(그래프) 버튼
+water_level_graph_btn = tk.Button(window, text='수위(그래프)', command=lambda: update_and_plot_data('water_level'), bg='lightgray', fg='black')
+water_level_graph_btn.place(relx=0.9, rely=0.1, anchor='center')
+
+# 리셋 버튼
+reset_btn = tk.Button(window, text='리셋', command=reset_graph, bg='lightgray', fg='black')
+reset_btn.place(relx=0.1, rely=0.9, anchor='center')
+
+# 라벨을 통해 받은 데이터 출력
+data_label = tk.Label(window, text="", font=("Arial", 14))
+data_label.place(relx=0.5, rely=0.3, anchor='center')  # Center align the label
+
+window.mainloop()
